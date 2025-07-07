@@ -1,0 +1,3015 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mui/toolpad/v0.12.0/docs/schemas/v1/definitions.json#properties/Page
+
+apiVersion: v1
+kind: page
+spec:
+  displayName: CS KPI Dashboard
+  alias:
+    - hr03hdi
+  title: CS Dashboard
+  queries:
+    - name: metricEvents
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: start_time
+            value:
+              $$jsExpression: |
+                const days = 30
+                Math.round(new Date().getTime() / 1000) - 3600 * 24 * days
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          /*
+
+          const days = 30
+
+          const minDate = new Date((Math.round(new Date().getTime() / 1000) -
+          3600 * 24 * days) * 1000).toISOString();
+
+          */
+
+          return data
+            .ticket_metrics
+          //  .filter((metric) => metric.created_at > minDate);
+        transformEnabled: true
+    - name: fetchTicketIds
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/tickets/show_many
+        searchParams:
+          - name: ids
+            value:
+              $$jsExpression: |
+                parameters.ids
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: |-
+          return data.tickets.reduce((acc, item) => {
+            acc[item.id] = {
+              tags: item.tags,
+            };
+            return acc;
+          }, {});
+        transformEnabled: true
+      parameters:
+        - name: ids
+          value:
+            $$jsExpression: |
+              metricEvents.rows.map((row) => row.ticket_id).join(",")
+    - name: totalCreated
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/incremental/tickets.json?
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          /* const tickets = data.tickets || [];
+
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+            const createdLast7Days = tickets.filter(ticket => {
+              const createdAt = new Date(ticket.created_at);
+              return createdAt >= sevenDaysAgo;
+            });
+
+            return createdLast7Days.length;
+
+            return createdLast7Days.length; // Must return a value!
+          */
+
+
+          const rawTickets = data.tickets || [];
+
+
+          // Remove duplicates: Use a Set to track seen keys (id + updated_at)
+
+          const seen = new Set();
+
+          const tickets = rawTickets.filter((ticket) => {
+            const uniqueKey = `${ticket.id}-${ticket.updated_at}`;
+            if (seen.has(uniqueKey)) {
+              return false;
+            }
+            seen.add(uniqueKey);
+            return true;
+          });
+
+
+          // Date boundaries
+
+          const now = new Date();
+
+          const start7DaysAgo = new Date(now);
+
+          start7DaysAgo.setDate(now.getDate() - 7);
+
+
+          const start14DaysAgo = new Date(now);
+
+          start14DaysAgo.setDate(now.getDate() - 14);
+
+
+          const start30DaysAgo = new Date(now);
+
+          start30DaysAgo.setDate(now.getDate() - 30);
+
+
+          // Metrics
+
+          let createdLast7 = 0;
+
+          let created7to14 = 0;
+
+          let createdLast30 = 0;
+
+          let solvedLast7 = 0;
+
+          let solvedLast30 = 0;
+
+
+          tickets.forEach((ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const updatedAt = new Date(ticket.updated_at);
+            const isSolved = ticket.status === "solved" || ticket.status === "closed";
+
+            if (createdAt >= start7DaysAgo) {
+              createdLast7++;
+            }
+
+            if (createdAt >= start14DaysAgo && createdAt < start7DaysAgo) {
+              created7to14++;
+            }
+
+            if (createdAt >= start30DaysAgo) {
+              createdLast30++;
+            }
+
+            if (isSolved && updatedAt >= start7DaysAgo) {
+              solvedLast7++;
+            }
+
+            if (isSolved && updatedAt >= start30DaysAgo) {
+              solvedLast30++;
+            }
+          });
+
+
+          return {
+            createdLast7,
+            created7to14,
+            createdLast30,
+            solvedLast7,
+            solvedLast30,
+          };
+        transformEnabled: true
+        searchParams: [{ name: start_time, value: { $$jsExpression: const days = 30
+
+                    Math.round(new Date().getTime() / 1000) - 3600 * 24 * days } }]
+    - name: ticketMetric1
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        headers: [{ name: Authorization, value: { $$env: ZENDESK } }]
+        method: GET
+        searchParams:
+          - name: page[size]
+            value: '100'
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+    - name: ticketMetric2
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        headers: [{ name: Authorization, value: { $$env: ZENDESK } }]
+        method: GET
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric1.data?.after_cursor)()
+    - name: ticketMetric3
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric2.data?.after_cursor)()
+    - name: ticketMetric4
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric3.data?.after_cursor)()
+    - name: ticketMetric5
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric4.data?.after_cursor)()
+    - name: ticketMetric6
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric5.data?.after_cursor)()
+    - name: ticketMetric7
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric6.data?.after_cursor)()
+    - name: ticketMetric8
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric7.data?.after_cursor)()
+    - name: ticketMetric9
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric8.data?.after_cursor)()
+    - name: ticketMetric10
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric9.data?.after_cursor)()
+    - name: ticketMetric11
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric10.data?.after_cursor)()
+    - name: ticketMetric12
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric11.data?.after_cursor)()
+    - name: ticketMetric13
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric12.data?.after_cursor)()
+    - name: ticketMetric14
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric13.data?.after_cursor)()
+    - name: ticketMetric15
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric14.data?.after_cursor)()
+    - name: ticketMetric16
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric15.data?.after_cursor)()
+    - name: ticketMetric17
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric16.data?.after_cursor)()
+    - name: ticketMetric18
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric17.data?.after_cursor)()
+    - name: ticketMetric19
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric18.data?.after_cursor)()
+    - name: ticketMetric20
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/ticket_metrics
+        searchParams:
+          - name: page[size]
+            value: '100'
+          - name: page[after]
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.ticket_metrics || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+            const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            const firstReply = ticket.first_resolution_time_in_minutes?.business ?? null;
+            const requesterWait = ticket.requester_wait_time_in_minutes?.business ?? null;
+            const resolutionTime = ticket.full_resolution_time_in_minutes?.business ?? null;
+
+            acc[ticket.ticket_id] = {
+              created_at: ticket.created_at,
+              solved_at: ticket.solved_at ?? null,
+              resolution_time_minutes: resolutionTime,
+              reply_time_minutes: ticket.reply_time_in_minutes?.business ?? null,
+              first_reply_time_minutes: firstReply,
+              requester_wait_time_minutes: requesterWait,
+              number_of_replies: ticket.replies ?? 0,
+
+              // ✅ Created date buckets (added createdPrevious7Days & createdPrevious30Days)
+              createdLast7Days: createdAt >= sevenDaysAgo,
+              createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+              createdLast30Days: createdAt >= thirtyDaysAgo,
+              createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+
+              // ✅ Solved date buckets (unchanged)
+              solvedLast7Days: solvedAt ? solvedAt >= sevenDaysAgo : false,
+              solvedLast30Days: solvedAt ? solvedAt >= thirtyDaysAgo : false,
+              solvedPrevious7Days: solvedAt ? solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo : false,
+              solvedPrevious30Days: solvedAt ? solvedAt >= sixtyDaysAgo && solvedAt < thirtyDaysAgo : false,
+
+              // ✅ First Reply Time in buckets (using createdAt for bucket filter)
+              firstReplyLast7Days: createdAt >= sevenDaysAgo ? firstReply : null,
+              firstReplyPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? firstReply : null,
+              firstReplyLast30Days: createdAt >= thirtyDaysAgo ? firstReply : null,
+              firstReplyPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? firstReply : null,
+
+              // ✅ Requester Wait Time in buckets
+              requesterWaitLast7Days: createdAt >= sevenDaysAgo ? requesterWait : null,
+              requesterWaitPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo ? requesterWait : null,
+              requesterWaitLast30Days: createdAt >= thirtyDaysAgo ? requesterWait : null,
+              requesterWaitPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo ? requesterWait : null,
+            };
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.meta?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketMetric19.data?.after_cursor)()
+    - name: ticketTags
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/tickets/show_many
+        searchParams: []
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.tickets || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            // ❗❗ FILTER: Only include tickets CREATED after a threshold
+            if (createdAt >= sixtyDaysAgo) {
+              acc[ticket.id] = {
+                ticket_id: ticket.id,
+                tags: ticket.tags || [],
+                status: ticket.status || null,
+                created_at: ticket.created_at,
+                createdLast7Days: createdAt >= sevenDaysAgo,
+                createdLast30Days: createdAt >= thirtyDaysAgo,
+                createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+                createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+              };
+            }
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.after_cursor ?? null,
+          };
+        transformEnabled: true
+    - name: ticketTags1
+      mode: query
+      query:
+        kind: rest
+        url: https://mui.zendesk.com/api/v2/incremental/tickets/cursor?
+        searchParams:
+          - name: cursor
+            value:
+              $$jsExpression: 'parameters.afterCursor ? parameters.afterCursor : undefined'
+        headers:
+          - name: Authorization
+            value:
+              $$env: ZENDESK
+        method: GET
+        transform: >
+          const tickets = (data?.tickets || []).reduce((acc, ticket) => {
+            const createdAt = new Date(ticket.created_at);
+
+            const now = Date.now();
+            const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+            const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+            // ❗❗ FILTER: Only include tickets CREATED after a threshold
+            if (createdAt >= sixtyDaysAgo) {
+              acc[ticket.id] = {
+                ticket_id: ticket.id,
+                tags: ticket.tags || [],
+                status: ticket.status || null,
+                created_at: ticket.created_at,
+                createdLast7Days: createdAt >= sevenDaysAgo,
+                createdLast30Days: createdAt >= thirtyDaysAgo,
+                createdPrevious7Days: createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo,
+                createdPrevious30Days: createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo,
+              };
+            }
+
+            return acc;
+          }, {});
+
+
+          return {
+            tickets,
+            after_cursor: data?.after_cursor ?? null,
+          };
+        transformEnabled: true
+      parameters:
+        - name: afterCursor
+          value:
+            $$jsExpression: (() => ticketTags.data?.after_cursor)()
+    - name: GSData
+      mode: query
+      query:
+        kind: rest
+        url: https://script.google.com/macros/s/AKfycbzyuVbZuRpeHeKUO6xjtYE-8Zqg0li3VD3YFNn7LMChXsqHvW6H5fomqLHQLRLIS6os/exec
+        headers: []
+        method: GET
+  content:
+    - component: Container
+      name: mainheading
+      children:
+        - component: Text
+          name: Title
+          layout:
+            horizontalAlign: center
+          props:
+            value: CS KPI Dashboard
+            variant: h1
+        - component: Text
+          name: text12
+          props:
+            value: Customer Support overview of key metrics against KPI's
+          layout:
+            horizontalAlign: center
+            verticalAlign: center
+        - component: Button
+          name: button
+          layout:
+            horizontalAlign: center
+          props:
+            size: large
+            content: View Documentation
+            variant: contained
+            color: primary
+            fullWidth: false
+            disabled: false
+            sx:
+              margin: 20px
+              padding: 10px 40px
+              backgroundColor: '#D0DEF1'
+            onClick: null
+    - component: Spacer
+      name: spacer2
+      layout:
+        height: 60
+    - component: Tabs
+      name: tabs
+      props:
+        defaultValue: tickets
+        tabs:
+          - title: Tickets
+            name: tickets
+          - title: Response Time
+            name: response-time
+          - title: SLA Breached
+            name: sla-breached
+          - title: Tags
+            name: tags
+      layout:
+        horizontalAlign: center
+    - component: Spacer
+      name: spacer1
+      layout:
+        height: 60
+    - component: Container
+      name: slabreached
+      children:
+        - component: PageRow
+          name: pageRow9
+          props:
+            justifyContent: start
+          children:
+            - component: PageColumn
+              name: pageColumn7
+              layout:
+                columnSize: 1
+              children:
+                - component: Paper
+                  name: paper5
+                  layout:
+                    columnSize: 1
+                    verticalAlign: start
+                  children:
+                    - component: Text
+                      name: text7
+                      props:
+                        variant: h4
+                        value: SLA Breached
+                      layout:
+                        horizontalAlign: center
+                        verticalAlign: center
+                  props:
+                    sx:
+                      backgroundColor: '#D0DEF1'
+                      margin: 15px
+                      borderRadius: 50px
+                - component: Text
+                  name: text10
+                  props:
+                    value: Tickets Breached
+                    sx:
+                      padding: 2
+                      fontSize: 20px
+                    variant: subtitle2
+                  layout:
+                    horizontalAlign: center
+                    verticalAlign: center
+                - component: PageRow
+                  name: pageRow12
+                  props:
+                    justifyContent: start
+                  children:
+                    - component: PageColumn
+                      name: pageColumn8
+                      layout:
+                        columnSize: 1
+                      children:
+                        - component: PageRow
+                          name: pageRow11
+                          props:
+                            justifyContent: start
+                          children:
+                            - component: codeComponent.ZendeskKPITile1
+                              name: zendeskKPITile10
+                              props:
+                                title: Last 7 Days (vs Previous)
+                                unit: ''
+                            - component: codeComponent.ZendeskKPITile1
+                              name: zendeskKPITile1
+                              layout:
+                                columnSize: 1
+                              props:
+                                title: Last 30 Days (vs Previous)
+                                unit: ''
+                        - component: Text
+                          name: text11
+                          layout:
+                            horizontalAlign: center
+                            verticalAlign: center
+                          props:
+                            value: Assigned / Unassigned
+                            sx:
+                              padding: 2
+                              fontSize: 20px
+                            variant: subtitle2
+                        - component: PageRow
+                          name: pageRow13
+                          props:
+                            justifyContent: start
+                          children:
+                            - component: codeComponent.ZendeskKPITile1
+                              name: zendeskKPITile9
+                              props:
+                                title: Last 7 Days (vs Previous)
+                                unit: ''
+                            - component: codeComponent.ZendeskKPITile1
+                              name: zendeskKPITile11
+                              props:
+                                title: Last 30 Days (vs Previous)
+                                unit: ''
+              props:
+                gap: 1
+            - component: PageColumn
+              name: pageColumn9
+              layout:
+                columnSize: 1
+              children:
+                - component: Paper
+                  name: paper4
+                  layout:
+                    columnSize: 1
+                  children:
+                    - component: Text
+                      name: text9
+                      layout:
+                        horizontalAlign: center
+                        verticalAlign: center
+                      props:
+                        variant: h4
+                        value: SLA Breached (by category)
+                  props:
+                    sx:
+                      backgroundColor: '#D0DEF1'
+                      margin: 15px
+                      borderRadius: 50px
+                - component: PageRow
+                  name: pageRow10
+                  props:
+                    justifyContent: start
+                  children:
+                    - component: PageColumn
+                      name: pageColumn10
+                      layout:
+                        columnSize: 1
+                      children:
+                        - component: codeComponent.ZendeskKPITile1
+                          name: zendeskKPITile8
+                          layout:
+                            columnSize: 1
+                          props:
+                            title: 'Avg Duration of Breached Tickets '
+                        - component: DataGrid
+                          name: dataGrid2
+      props:
+        visible:
+          $$jsExpression: tabs.value == "sla-breached"
+    - component: Container
+      name: tags
+      props:
+        visible:
+          $$jsExpression: tabs.value == "tags"
+      children:
+        - component: PageRow
+          name: pageRow8
+          props:
+            justifyContent: start
+          children:
+            - component: PageColumn
+              name: pageColumn5
+              layout:
+                columnSize: 1
+              children:
+                - component: Text
+                  name: text8
+                  layout:
+                    horizontalAlign: center
+                    verticalAlign: center
+                  props:
+                    value: Last 7 Days
+                    variant: subtitle2
+                    sx:
+                      padding: 2
+                      fontSize: 20px
+                - component: codeComponent.CsPieChart
+                  name: csPieChart1
+                  layout:
+                    columnSize: 1
+            - component: PageColumn
+              name: pageColumn6
+              layout:
+                columnSize: 1
+              children:
+                - component: Text
+                  name: text6
+                  layout:
+                    verticalAlign: center
+                    horizontalAlign: center
+                  props:
+                    value: Last 30 Days
+                    variant: subtitle2
+                    sx:
+                      padding: 2
+                      fontSize: 20px
+                - component: codeComponent.CsPieChart
+                  name: csPieChart
+                  layout:
+                    columnSize: 1
+    - component: Container
+      name: responsetimes
+      props:
+        visible:
+          $$jsExpression: tabs.value == "response-time"
+      children:
+        - component: PageRow
+          name: pageRow5
+          props:
+            justifyContent: start
+          children:
+            - component: PageColumn
+              name: pageColumn3
+              layout:
+                columnSize: 1
+              children:
+                - component: Paper
+                  name: paper1
+                  children:
+                    - component: Text
+                      name: text3
+                      layout:
+                        horizontalAlign: center
+                        verticalAlign: center
+                      props:
+                        variant: h4
+                        value: Response Times
+                  props:
+                    sx:
+                      backgroundColor: '#D0DEF1'
+                      margin: 15px
+                      borderRadius: 50px
+                - component: Text
+                  name: text5
+                  layout:
+                    horizontalAlign: center
+                    verticalAlign: center
+                  props:
+                    value: Avg First Reply Time
+                    sx:
+                      padding: 2
+                      fontSize: 20px
+                    variant: subtitle2
+                - component: PageRow
+                  name: pageRow3
+                  props:
+                    justifyContent: start
+                  children:
+                    - component: PageColumn
+                      name: pageColumn4
+                      layout:
+                        columnSize: 1
+                      children:
+                        - component: PageRow
+                          name: pageRow6
+                          props:
+                            justifyContent: start
+                          children:
+                            - component: codeComponent.ZendeskKPITile1
+                              name: zendeskKPITile3
+                              layout:
+                                columnSize: 1
+                              props:
+                                title: Last 7 Days (vs Previous)
+                                value:
+                                  $$jsExpression: >-
+                                    (() => {
+                                      const allTickets = {
+                                        ...(ticketMetric1?.data?.tickets || {}),
+                                        ...(ticketMetric2?.data?.tickets || {}),
+                                        ...(ticketMetric3?.data?.tickets || {}),
+                                        ...(ticketMetric4?.data?.tickets || {}),
+                                        ...(ticketMetric5?.data?.tickets || {}),
+                                        ...(ticketMetric6?.data?.tickets || {}),
+                                        ...(ticketMetric7?.data?.tickets || {}),
+                                        ...(ticketMetric8?.data?.tickets || {}),
+                                        ...(ticketMetric9?.data?.tickets || {}),
+                                        ...(ticketMetric10?.data?.tickets || {}),
+                                        ...(ticketMetric11?.data?.tickets || {}),
+                                        ...(ticketMetric12?.data?.tickets || {}),
+                                        ...(ticketMetric13?.data?.tickets || {}),
+                                        ...(ticketMetric14?.data?.tickets || {}),
+                                        ...(ticketMetric15?.data?.tickets || {}),
+                                        ...(ticketMetric16?.data?.tickets || {}),
+                                        ...(ticketMetric17?.data?.tickets || {}),
+                                        ...(ticketMetric18?.data?.tickets || {}),
+                                        ...(ticketMetric19?.data?.tickets || {}),
+                                        ...(ticketMetric20?.data?.tickets || {}),
+                                      };
+
+                                      const ticketsArray = Object.values(allTickets);
+
+                                      const firstReplies = ticketsArray
+                                        .map((ticket) => ticket.firstReplyLast7Days)
+                                        .filter((time) => typeof time === 'number');
+
+                                      const avgFirstReplyMinutes = firstReplies.length
+                                        ? firstReplies.reduce((sum, val) => sum + val, 0) / firstReplies.length
+                                        : 0;
+
+                                      return Number((avgFirstReplyMinutes / 60).toFixed(1)); // Hours
+                                    })()
+                                prevValue:
+                                  $$jsExpression: >-
+                                    (() => {
+                                      const allTickets = {
+                                        ...(ticketMetric1?.data?.tickets || {}),
+                                        ...(ticketMetric2?.data?.tickets || {}),
+                                        ...(ticketMetric3?.data?.tickets || {}),
+                                        ...(ticketMetric4?.data?.tickets || {}),
+                                        ...(ticketMetric5?.data?.tickets || {}),
+                                        ...(ticketMetric6?.data?.tickets || {}),
+                                        ...(ticketMetric7?.data?.tickets || {}),
+                                        ...(ticketMetric8?.data?.tickets || {}),
+                                        ...(ticketMetric9?.data?.tickets || {}),
+                                        ...(ticketMetric10?.data?.tickets || {}),
+                                        ...(ticketMetric11?.data?.tickets || {}),
+                                        ...(ticketMetric12?.data?.tickets || {}),
+                                        ...(ticketMetric13?.data?.tickets || {}),
+                                        ...(ticketMetric14?.data?.tickets || {}),
+                                        ...(ticketMetric15?.data?.tickets || {}),
+                                        ...(ticketMetric16?.data?.tickets || {}),
+                                        ...(ticketMetric17?.data?.tickets || {}),
+                                        ...(ticketMetric18?.data?.tickets || {}),
+                                        ...(ticketMetric19?.data?.tickets || {}),
+                                        ...(ticketMetric20?.data?.tickets || {}),
+                                      };
+
+                                      const ticketsArray = Object.values(allTickets);
+
+                                      const firstReplies = ticketsArray
+                                        .map((ticket) => ticket.firstReplyPrevious7Days)
+                                        .filter((time) => typeof time === 'number');
+
+                                      const avgFirstReplyMinutes = firstReplies.length
+                                        ? firstReplies.reduce((sum, val) => sum + val, 0) / firstReplies.length
+                                        : 0;
+
+                                      return Number((avgFirstReplyMinutes / 60).toFixed(1)); // Hours
+                                    })()
+                            - component: codeComponent.ZendeskKPITile1
+                              name: zendeskKPITile5
+                              layout:
+                                columnSize: 1
+                              props:
+                                title: Last 30 Days (vs Previous)
+                                value:
+                                  $$jsExpression: >-
+                                    (() => {
+                                      const allTickets = {
+                                        ...(ticketMetric1?.data?.tickets || {}),
+                                        ...(ticketMetric2?.data?.tickets || {}),
+                                        ...(ticketMetric3?.data?.tickets || {}),
+                                        ...(ticketMetric4?.data?.tickets || {}),
+                                        ...(ticketMetric5?.data?.tickets || {}),
+                                        ...(ticketMetric6?.data?.tickets || {}),
+                                        ...(ticketMetric7?.data?.tickets || {}),
+                                        ...(ticketMetric8?.data?.tickets || {}),
+                                        ...(ticketMetric9?.data?.tickets || {}),
+                                        ...(ticketMetric10?.data?.tickets || {}),
+                                        ...(ticketMetric11?.data?.tickets || {}),
+                                        ...(ticketMetric12?.data?.tickets || {}),
+                                        ...(ticketMetric13?.data?.tickets || {}),
+                                        ...(ticketMetric14?.data?.tickets || {}),
+                                        ...(ticketMetric15?.data?.tickets || {}),
+                                        ...(ticketMetric16?.data?.tickets || {}),
+                                        ...(ticketMetric17?.data?.tickets || {}),
+                                        ...(ticketMetric18?.data?.tickets || {}),
+                                        ...(ticketMetric19?.data?.tickets || {}),
+                                        ...(ticketMetric20?.data?.tickets || {}),
+                                      };
+
+                                      const ticketsArray = Object.values(allTickets);
+
+                                      const firstReplies = ticketsArray
+                                        .map((ticket) => ticket.firstReplyLast30Days)
+                                        .filter((time) => typeof time === 'number');
+
+                                      const avgFirstReplyMinutes = firstReplies.length
+                                        ? firstReplies.reduce((sum, val) => sum + val, 0) / firstReplies.length
+                                        : 0;
+
+                                      return Number((avgFirstReplyMinutes / 60).toFixed(1)); // Hours
+                                    })()
+                                prevValue:
+                                  $$jsExpression: >-
+                                    (() => {
+                                      const allTickets = {
+                                        ...(ticketMetric1?.data?.tickets || {}),
+                                        ...(ticketMetric2?.data?.tickets || {}),
+                                        ...(ticketMetric3?.data?.tickets || {}),
+                                        ...(ticketMetric4?.data?.tickets || {}),
+                                        ...(ticketMetric5?.data?.tickets || {}),
+                                        ...(ticketMetric6?.data?.tickets || {}),
+                                        ...(ticketMetric7?.data?.tickets || {}),
+                                        ...(ticketMetric8?.data?.tickets || {}),
+                                        ...(ticketMetric9?.data?.tickets || {}),
+                                        ...(ticketMetric10?.data?.tickets || {}),
+                                        ...(ticketMetric11?.data?.tickets || {}),
+                                        ...(ticketMetric12?.data?.tickets || {}),
+                                        ...(ticketMetric13?.data?.tickets || {}),
+                                        ...(ticketMetric14?.data?.tickets || {}),
+                                        ...(ticketMetric15?.data?.tickets || {}),
+                                        ...(ticketMetric16?.data?.tickets || {}),
+                                        ...(ticketMetric17?.data?.tickets || {}),
+                                        ...(ticketMetric18?.data?.tickets || {}),
+                                        ...(ticketMetric19?.data?.tickets || {}),
+                                        ...(ticketMetric20?.data?.tickets || {}),
+                                      };
+
+                                      const ticketsArray = Object.values(allTickets);
+
+                                      const firstReplies = ticketsArray
+                                        .map((ticket) => ticket.firstReplyPrevious30Days)
+                                        .filter((time) => typeof time === 'number');
+
+                                      const avgFirstReplyMinutes = firstReplies.length
+                                        ? firstReplies.reduce((sum, val) => sum + val, 0) / firstReplies.length
+                                        : 0;
+
+                                      return Number((avgFirstReplyMinutes / 60).toFixed(1)); // Hours
+                                    })()
+                        - component: Text
+                          name: text4
+                          layout:
+                            horizontalAlign: center
+                            verticalAlign: center
+                          props:
+                            sx:
+                              padding: 2
+                              fontSize: 20px
+                            value: Avg Next Reply Time
+                            variant: subtitle2
+                        - component: PageRow
+                          name: pageRow7
+                          props:
+                            justifyContent: start
+                          children:
+                            - component: codeComponent.ZendeskKPITile1
+                              name: zendeskKPITile6
+                              props:
+                                title: Last 7 Days (vs Previous)
+                            - component: codeComponent.ZendeskKPITile1
+                              name: zendeskKPITile7
+                              props:
+                                title: Last 30 Days (vs Previous)
+            - component: PageColumn
+              name: pageColumn1
+              layout:
+                columnSize: 1
+              children:
+                - component: Paper
+                  name: paper
+                  layout:
+                    verticalAlign: start
+                  children:
+                    - component: Text
+                      name: text2
+                      layout:
+                        horizontalAlign: center
+                        verticalAlign: center
+                      props:
+                        variant: h4
+                        value: Replies (by category)
+                  props:
+                    sx:
+                      backgroundColor: '#D0DEF1'
+                      margin: 15px
+                      borderRadius: 50px
+                - component: codeComponent.ZendeskKPITile1
+                  name: zendeskKPITile4
+                  props:
+                    title: 'Avg # of Replies '
+                    unit: ''
+                    value:
+                      $$jsExpression: >-
+                        (() => {
+                          const allTickets = {
+                            ...(ticketMetric1?.data?.tickets || {}),
+                            ...(ticketMetric2?.data?.tickets || {}),
+                            ...(ticketMetric3?.data?.tickets || {}),
+                            ...(ticketMetric4?.data?.tickets || {}),
+                            ...(ticketMetric5?.data?.tickets || {}),
+                            ...(ticketMetric6?.data?.tickets || {}),
+                            ...(ticketMetric7?.data?.tickets || {}),
+                            ...(ticketMetric8?.data?.tickets || {}),
+                            ...(ticketMetric9?.data?.tickets || {}),
+                            ...(ticketMetric10?.data?.tickets || {}),
+                            ...(ticketMetric11?.data?.tickets || {}),
+                            ...(ticketMetric12?.data?.tickets || {}),
+                            ...(ticketMetric13?.data?.tickets || {}),
+                            ...(ticketMetric14?.data?.tickets || {}),
+                            ...(ticketMetric15?.data?.tickets || {}),
+                            ...(ticketMetric16?.data?.tickets || {}),
+                            ...(ticketMetric17?.data?.tickets || {}),
+                            ...(ticketMetric18?.data?.tickets || {}),
+                            ...(ticketMetric19?.data?.tickets || {}),
+                            ...(ticketMetric20?.data?.tickets || {}),
+                          };
+
+                          const ticketsArray = Object.values(allTickets);
+
+                          const recentTickets = ticketsArray.filter((ticket) => ticket.createdLast7Days);
+
+                          const totalReplies = recentTickets.reduce((sum, ticket) => sum + (ticket.number_of_replies || 0), 0);
+
+                          return recentTickets.length ? Number((totalReplies / recentTickets.length).toFixed(2)) : 0;
+                        })()
+                    prevValue:
+                      $$jsExpression: >-
+                        (() => {
+                          const allTickets = {
+                            ...(ticketMetric1?.data?.tickets || {}),
+                            ...(ticketMetric2?.data?.tickets || {}),
+                            ...(ticketMetric3?.data?.tickets || {}),
+                            ...(ticketMetric4?.data?.tickets || {}),
+                            ...(ticketMetric5?.data?.tickets || {}),
+                            ...(ticketMetric6?.data?.tickets || {}),
+                            ...(ticketMetric7?.data?.tickets || {}),
+                            ...(ticketMetric8?.data?.tickets || {}),
+                            ...(ticketMetric9?.data?.tickets || {}),
+                            ...(ticketMetric10?.data?.tickets || {}),
+                            ...(ticketMetric11?.data?.tickets || {}),
+                            ...(ticketMetric12?.data?.tickets || {}),
+                            ...(ticketMetric13?.data?.tickets || {}),
+                            ...(ticketMetric14?.data?.tickets || {}),
+                            ...(ticketMetric15?.data?.tickets || {}),
+                            ...(ticketMetric16?.data?.tickets || {}),
+                            ...(ticketMetric17?.data?.tickets || {}),
+                            ...(ticketMetric18?.data?.tickets || {}),
+                            ...(ticketMetric19?.data?.tickets || {}),
+                            ...(ticketMetric20?.data?.tickets || {}),
+                          };
+
+                          const ticketsArray = Object.values(allTickets);
+
+                          const priorTickets = ticketsArray.filter((ticket) => ticket.createdPrevious7Days);
+
+                          const totalReplies = priorTickets.reduce((sum, ticket) => sum + (ticket.number_of_replies || 0), 0);
+
+                          return priorTickets.length ? Number((totalReplies / priorTickets.length).toFixed(2)) : 0;
+                        })()
+                - component: DataGrid
+                  name: dataGrid1
+    - component: Container
+      name: tickets
+      props:
+        sx: null
+        visible:
+          $$jsExpression: tabs.value == "tickets"
+      children:
+        - component: PageRow
+          name: pageRow2
+          props:
+            justifyContent: start
+          children:
+            - component: PageColumn
+              name: pageColumn2
+              layout:
+                columnSize: 1
+              children:
+                - component: Paper
+                  name: paper2
+                  layout:
+                    columnSize: 1
+                  children:
+                    - component: Text
+                      name: text1
+                      layout:
+                        horizontalAlign: center
+                      props:
+                        variant: h4
+                        value: Tickets
+                  props:
+                    sx:
+                      backgroundColor: '#D0DEF1'
+                      margin: 15px
+                      borderRadius: 50px
+                - component: Text
+                  name: subheading3
+                  layout:
+                    columnSize: 1
+                    horizontalAlign: center
+                    verticalAlign: center
+                  props:
+                    value: Total Created
+                    mode: text
+                    sx:
+                      padding: 2
+                      fontSize: 20px
+                    variant: subtitle2
+                - component: PageRow
+                  name: pageRow1
+                  props:
+                    justifyContent: start
+                  children:
+                    - component: codeComponent.ZendeskKPITile1
+                      name: frlast7days
+                      layout:
+                        columnSize: 1
+                      props:
+                        title: Last 7 Days (vs Previous)
+                        unit: ''
+                        value:
+                          $$jsExpression: >-
+                            (() => {
+                              const allTickets = {
+                                ...(ticketMetric1?.data?.tickets || {}),
+                                ...(ticketMetric2?.data?.tickets || {}),
+                                ...(ticketMetric3?.data?.tickets || {}),
+                                ...(ticketMetric4?.data?.tickets || {}),
+                                ...(ticketMetric5?.data?.tickets || {}),
+                                ...(ticketMetric6?.data?.tickets || {}),
+                                ...(ticketMetric7?.data?.tickets || {}),
+                                ...(ticketMetric8?.data?.tickets || {}),
+                                ...(ticketMetric9?.data?.tickets || {}),
+                                ...(ticketMetric10?.data?.tickets || {}),
+                                ...(ticketMetric11?.data?.tickets || {}),
+                                ...(ticketMetric12?.data?.tickets || {}),
+                                ...(ticketMetric13?.data?.tickets || {}),
+                                ...(ticketMetric14?.data?.tickets || {}),
+                                ...(ticketMetric15?.data?.tickets || {}),
+                                ...(ticketMetric16?.data?.tickets || {}),
+                                ...(ticketMetric17?.data?.tickets || {}),
+                                ...(ticketMetric18?.data?.tickets || {}),
+                                ...(ticketMetric19?.data?.tickets || {}),
+                                ...(ticketMetric20?.data?.tickets || {}),
+                              };
+
+                              const ticketsArray = Object.values(allTickets);
+
+                              const recentTickets = ticketsArray.filter((ticket) => ticket.createdLast7Days);
+
+                              return recentTickets.length;
+                            })()
+                        prevValue:
+                          $$jsExpression: >-
+                            (() => {
+                              const now = new Date();
+                              const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                              const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+                              const allTickets = {
+                                ...(ticketMetric1?.data?.tickets || {}),
+                                ...(ticketMetric2?.data?.tickets || {}),
+                                ...(ticketMetric3?.data?.tickets || {}),
+                                ...(ticketMetric4?.data?.tickets || {}),
+                                ...(ticketMetric5?.data?.tickets || {}),
+                                ...(ticketMetric6?.data?.tickets || {}),
+                                ...(ticketMetric7?.data?.tickets || {}),
+                                ...(ticketMetric8?.data?.tickets || {}),
+                                ...(ticketMetric9?.data?.tickets || {}),
+                                ...(ticketMetric10?.data?.tickets || {}),
+                                ...(ticketMetric11?.data?.tickets || {}),
+                                ...(ticketMetric12?.data?.tickets || {}),
+                                ...(ticketMetric13?.data?.tickets || {}),
+                                ...(ticketMetric14?.data?.tickets || {}),
+                                ...(ticketMetric15?.data?.tickets || {}),
+                                ...(ticketMetric16?.data?.tickets || {}),
+                                ...(ticketMetric17?.data?.tickets || {}),
+                                ...(ticketMetric18?.data?.tickets || {}),
+                                ...(ticketMetric19?.data?.tickets || {}),
+                                ...(ticketMetric20?.data?.tickets || {}),
+                              };
+
+                              const ticketsArray = Object.values(allTickets);
+
+                              const previousWeekTickets = ticketsArray.filter((ticket) => {
+                                const createdAt = new Date(ticket.created_at);
+                                return createdAt >= fourteenDaysAgo && createdAt < sevenDaysAgo;
+                              });
+
+                              return previousWeekTickets.length;
+                            })()
+                        kpiTarget: 0
+                    - component: codeComponent.ZendeskKPITile1
+                      name: frlast30days
+                      layout:
+                        columnSize: 1
+                      props:
+                        title: Last 30 Days (vs Previous)
+                        unit: ''
+                        value:
+                          $$jsExpression: >-
+                            (() => {
+                              const allTickets = {
+                                ...(ticketMetric1?.data?.tickets || {}),
+                                ...(ticketMetric2?.data?.tickets || {}),
+                                ...(ticketMetric3?.data?.tickets || {}),
+                                ...(ticketMetric4?.data?.tickets || {}),
+                                ...(ticketMetric5?.data?.tickets || {}),
+                                ...(ticketMetric6?.data?.tickets || {}),
+                                ...(ticketMetric7?.data?.tickets || {}),
+                                ...(ticketMetric8?.data?.tickets || {}),
+                                ...(ticketMetric9?.data?.tickets || {}),
+                                ...(ticketMetric10?.data?.tickets || {}),
+                                ...(ticketMetric11?.data?.tickets || {}),
+                                ...(ticketMetric12?.data?.tickets || {}),
+                                ...(ticketMetric13?.data?.tickets || {}),
+                                ...(ticketMetric14?.data?.tickets || {}),
+                                ...(ticketMetric15?.data?.tickets || {}),
+                                ...(ticketMetric16?.data?.tickets || {}),
+                                ...(ticketMetric17?.data?.tickets || {}),
+                                ...(ticketMetric18?.data?.tickets || {}),
+                                ...(ticketMetric19?.data?.tickets || {}),
+                                ...(ticketMetric20?.data?.tickets || {}),
+                              };
+
+                              const ticketsArray = Object.values(allTickets);
+
+                              const recentTickets = ticketsArray.filter((ticket) => ticket.createdLast30Days);
+
+                              return recentTickets.length;
+                            })()
+                        prevValue:
+                          $$jsExpression: >-
+                            (() => {
+                              const now = Date.now();
+                              const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+                              const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000);
+
+                              const allTickets = {
+                                ...(ticketMetric1?.data?.tickets || {}),
+                                ...(ticketMetric2?.data?.tickets || {}),
+                                ...(ticketMetric3?.data?.tickets || {}),
+                                ...(ticketMetric4?.data?.tickets || {}),
+                                ...(ticketMetric5?.data?.tickets || {}),
+                                ...(ticketMetric6?.data?.tickets || {}),
+                                ...(ticketMetric7?.data?.tickets || {}),
+                                ...(ticketMetric8?.data?.tickets || {}),
+                                ...(ticketMetric9?.data?.tickets || {}),
+                                ...(ticketMetric10?.data?.tickets || {}),
+                                ...(ticketMetric11?.data?.tickets || {}),
+                                ...(ticketMetric12?.data?.tickets || {}),
+                                ...(ticketMetric13?.data?.tickets || {}),
+                                ...(ticketMetric14?.data?.tickets || {}),
+                                ...(ticketMetric15?.data?.tickets || {}),
+                                ...(ticketMetric16?.data?.tickets || {}),
+                                ...(ticketMetric17?.data?.tickets || {}),
+                                ...(ticketMetric18?.data?.tickets || {}),
+                                ...(ticketMetric19?.data?.tickets || {}),
+                                ...(ticketMetric20?.data?.tickets || {}),
+                              };
+
+                              const ticketsArray = Object.values(allTickets);
+
+                              const ticketsInPrevious30Days = ticketsArray.filter((ticket) => {
+                                const createdAt = new Date(ticket.created_at);
+                                return createdAt >= sixtyDaysAgo && createdAt < thirtyDaysAgo;
+                              });
+
+                              return ticketsInPrevious30Days.length;
+                            })()
+                - component: Text
+                  name: subheading4
+                  layout:
+                    columnSize: 1
+                    horizontalAlign: center
+                    verticalAlign: center
+                  props:
+                    value: Total Solved
+                    sx:
+                      padding: 2
+                      fontSize: 20px
+                    variant: subtitle2
+                - component: PageRow
+                  name: pageRow
+                  layout:
+                    columnSize: 1
+                  props:
+                    justifyContent: start
+                  children:
+                    - component: codeComponent.ZendeskKPITile1
+                      name: nrlast7days
+                      layout:
+                        columnSize: 1
+                      props:
+                        title: Last 7 Days (vs Previous)
+                        unit: ''
+                        value:
+                          $$jsExpression: >-
+                            (() => {
+                              const allTickets = {
+                                ...(ticketMetric1?.data?.tickets || {}),
+                                ...(ticketMetric2?.data?.tickets || {}),
+                                ...(ticketMetric3?.data?.tickets || {}),
+                                ...(ticketMetric4?.data?.tickets || {}),
+                                ...(ticketMetric5?.data?.tickets || {}),
+                                ...(ticketMetric6?.data?.tickets || {}),
+                                ...(ticketMetric7?.data?.tickets || {}),
+                                ...(ticketMetric8?.data?.tickets || {}),
+                                ...(ticketMetric9?.data?.tickets || {}),
+                                ...(ticketMetric10?.data?.tickets || {}),
+                                ...(ticketMetric11?.data?.tickets || {}),
+                                ...(ticketMetric12?.data?.tickets || {}),
+                                ...(ticketMetric13?.data?.tickets || {}),
+                                ...(ticketMetric14?.data?.tickets || {}),
+                                ...(ticketMetric15?.data?.tickets || {}),
+                                ...(ticketMetric16?.data?.tickets || {}),
+                                ...(ticketMetric17?.data?.tickets || {}),
+                                ...(ticketMetric18?.data?.tickets || {}),
+                                ...(ticketMetric19?.data?.tickets || {}),
+                                ...(ticketMetric20?.data?.tickets || {}),
+                              };
+
+                              const ticketsArray = Object.values(allTickets);
+
+                              const solvedTickets = ticketsArray.filter((ticket) => ticket.solvedLast7Days);
+
+                              return solvedTickets.length;
+                            })()
+                        prevValue:
+                          $$jsExpression: >-
+                            (() => {
+                              const allTickets = {
+                                ...(ticketMetric1?.data?.tickets || {}),
+                                ...(ticketMetric2?.data?.tickets || {}),
+                                ...(ticketMetric3?.data?.tickets || {}),
+                                ...(ticketMetric4?.data?.tickets || {}),
+                                ...(ticketMetric5?.data?.tickets || {}),
+                                ...(ticketMetric6?.data?.tickets || {}),
+                                ...(ticketMetric7?.data?.tickets || {}),
+                                ...(ticketMetric8?.data?.tickets || {}),
+                                ...(ticketMetric9?.data?.tickets || {}),
+                                ...(ticketMetric10?.data?.tickets || {}),
+                                ...(ticketMetric11?.data?.tickets || {}),
+                                ...(ticketMetric12?.data?.tickets || {}),
+                                ...(ticketMetric13?.data?.tickets || {}),
+                                ...(ticketMetric14?.data?.tickets || {}),
+                                ...(ticketMetric15?.data?.tickets || {}),
+                                ...(ticketMetric16?.data?.tickets || {}),
+                                ...(ticketMetric17?.data?.tickets || {}),
+                                ...(ticketMetric18?.data?.tickets || {}),
+                                ...(ticketMetric19?.data?.tickets || {}),
+                                ...(ticketMetric20?.data?.tickets || {}),
+                              };
+
+                              const ticketsArray = Object.values(allTickets);
+
+                              const now = Date.now();
+                              const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+                              const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000);
+
+                              const solvedTickets = ticketsArray.filter((ticket) => {
+                                const solvedAt = ticket.solved_at ? new Date(ticket.solved_at) : null;
+                                return solvedAt && solvedAt >= fourteenDaysAgo && solvedAt < sevenDaysAgo;
+                              });
+
+                              return solvedTickets.length;
+                            })()
+                    - component: codeComponent.ZendeskKPITile1
+                      name: nrlast30days
+                      layout:
+                        columnSize: 1
+                      props:
+                        title: Last 30 Days (vs Previous)
+                        unit: ''
+                        value:
+                          $$jsExpression: >-
+                            (() => {
+                              const allTickets = {
+                                ...(ticketMetric1?.data?.tickets || {}),
+                                ...(ticketMetric2?.data?.tickets || {}),
+                                ...(ticketMetric3?.data?.tickets || {}),
+                                ...(ticketMetric4?.data?.tickets || {}),
+                                ...(ticketMetric5?.data?.tickets || {}),
+                                ...(ticketMetric6?.data?.tickets || {}),
+                                ...(ticketMetric7?.data?.tickets || {}),
+                                ...(ticketMetric8?.data?.tickets || {}),
+                                ...(ticketMetric9?.data?.tickets || {}),
+                                ...(ticketMetric10?.data?.tickets || {}),
+                                ...(ticketMetric11?.data?.tickets || {}),
+                                ...(ticketMetric12?.data?.tickets || {}),
+                                ...(ticketMetric13?.data?.tickets || {}),
+                                ...(ticketMetric14?.data?.tickets || {}),
+                                ...(ticketMetric15?.data?.tickets || {}),
+                                ...(ticketMetric16?.data?.tickets || {}),
+                                ...(ticketMetric17?.data?.tickets || {}),
+                                ...(ticketMetric18?.data?.tickets || {}),
+                                ...(ticketMetric19?.data?.tickets || {}),
+                                ...(ticketMetric20?.data?.tickets || {}),
+                              };
+
+                              const ticketsArray = Object.values(allTickets);
+
+                              const solvedTickets = ticketsArray.filter((ticket) => ticket.solvedLast30Days);
+
+                              return solvedTickets.length;
+                            })()
+                        prevValue:
+                          $$jsExpression: >-
+                            (() => {
+                              const allTickets = {
+                                ...(ticketMetric1?.data?.tickets || {}),
+                                ...(ticketMetric2?.data?.tickets || {}),
+                                ...(ticketMetric3?.data?.tickets || {}),
+                                ...(ticketMetric4?.data?.tickets || {}),
+                                ...(ticketMetric5?.data?.tickets || {}),
+                                ...(ticketMetric6?.data?.tickets || {}),
+                                ...(ticketMetric7?.data?.tickets || {}),
+                                ...(ticketMetric8?.data?.tickets || {}),
+                                ...(ticketMetric9?.data?.tickets || {}),
+                                ...(ticketMetric10?.data?.tickets || {}),
+                                ...(ticketMetric11?.data?.tickets || {}),
+                                ...(ticketMetric12?.data?.tickets || {}),
+                                ...(ticketMetric13?.data?.tickets || {}),
+                                ...(ticketMetric14?.data?.tickets || {}),
+                                ...(ticketMetric15?.data?.tickets || {}),
+                                ...(ticketMetric16?.data?.tickets || {}),
+                                ...(ticketMetric17?.data?.tickets || {}),
+                                ...(ticketMetric18?.data?.tickets || {}),
+                                ...(ticketMetric19?.data?.tickets || {}),
+                                ...(ticketMetric20?.data?.tickets || {}),
+                              };
+
+                              const ticketsArray = Object.values(allTickets);
+
+                              const solvedTickets = ticketsArray.filter((ticket) => ticket.solvedPrevious30Days);
+
+                              return solvedTickets.length;
+                            })()
+            - component: PageColumn
+              name: pageColumn
+              layout:
+                columnSize: 1
+              children:
+                - component: Paper
+                  name: paper3
+                  layout:
+                    columnSize: 1
+                  children:
+                    - component: Text
+                      name: text
+                      layout:
+                        horizontalAlign: center
+                      props:
+                        variant: h4
+                        value: Resolution Time (by category)
+                  props:
+                    sx:
+                      backgroundColor: '#D0DEF1'
+                      margin: 15px
+                      borderRadius: 50px
+                - component: PageRow
+                  name: pageRow4
+                  props:
+                    justifyContent: start
+                  children:
+                    - component: codeComponent.ZendeskKPITile1
+                      name: zendeskKPITile2
+                      props:
+                        title: Last 7 Days (vs Previous)
+                        value:
+                          $$jsExpression: >-
+                            (() => {
+                              const allTickets = {
+                                ...(ticketMetric1?.data?.tickets || {}),
+                                ...(ticketMetric2?.data?.tickets || {}),
+                                ...(ticketMetric3?.data?.tickets || {}),
+                                ...(ticketMetric4?.data?.tickets || {}),
+                                ...(ticketMetric5?.data?.tickets || {}),
+                                ...(ticketMetric6?.data?.tickets || {}),
+                                ...(ticketMetric7?.data?.tickets || {}),
+                                ...(ticketMetric8?.data?.tickets || {}),
+                                ...(ticketMetric9?.data?.tickets || {}),
+                                ...(ticketMetric10?.data?.tickets || {}),
+                                ...(ticketMetric11?.data?.tickets || {}),
+                                ...(ticketMetric12?.data?.tickets || {}),
+                                ...(ticketMetric13?.data?.tickets || {}),
+                                ...(ticketMetric14?.data?.tickets || {}),
+                                ...(ticketMetric15?.data?.tickets || {}),
+                                ...(ticketMetric16?.data?.tickets || {}),
+                                ...(ticketMetric17?.data?.tickets || {}),
+                                ...(ticketMetric18?.data?.tickets || {}),
+                                ...(ticketMetric19?.data?.tickets || {}),
+                                ...(ticketMetric20?.data?.tickets || {}),
+                              };
+
+                              const ticketsArray = Object.values(allTickets);
+
+                              const solvedTickets = ticketsArray.filter((ticket) => ticket.solvedLast7Days);
+
+                              const resolutionTimes = solvedTickets
+                                .map((ticket) => ticket.resolution_time_minutes)
+                                .filter((time) => typeof time === 'number' && time !== null);
+
+                              const avgResolutionMinutes = resolutionTimes.length
+                                ? resolutionTimes.reduce((sum, val) => sum + val, 0) / resolutionTimes.length
+                                : 0;
+
+                              return Number((avgResolutionMinutes / 60).toFixed(1)); // Convert to hours
+                            })()
+                        prevValue:
+                          $$jsExpression: >-
+                            (() => {
+                              const allTickets = {
+                                ...(ticketMetric1?.data?.tickets || {}),
+                                ...(ticketMetric2?.data?.tickets || {}),
+                                ...(ticketMetric3?.data?.tickets || {}),
+                                ...(ticketMetric4?.data?.tickets || {}),
+                                ...(ticketMetric5?.data?.tickets || {}),
+                                ...(ticketMetric6?.data?.tickets || {}),
+                                ...(ticketMetric7?.data?.tickets || {}),
+                                ...(ticketMetric8?.data?.tickets || {}),
+                                ...(ticketMetric9?.data?.tickets || {}),
+                                ...(ticketMetric10?.data?.tickets || {}),
+                                ...(ticketMetric11?.data?.tickets || {}),
+                                ...(ticketMetric12?.data?.tickets || {}),
+                                ...(ticketMetric13?.data?.tickets || {}),
+                                ...(ticketMetric14?.data?.tickets || {}),
+                                ...(ticketMetric15?.data?.tickets || {}),
+                                ...(ticketMetric16?.data?.tickets || {}),
+                                ...(ticketMetric17?.data?.tickets || {}),
+                                ...(ticketMetric18?.data?.tickets || {}),
+                                ...(ticketMetric19?.data?.tickets || {}),
+                                ...(ticketMetric20?.data?.tickets || {}),
+                              };
+
+                              const ticketsArray = Object.values(allTickets);
+
+                              const solvedTickets = ticketsArray.filter((ticket) => ticket.solvedPrevious7Days);
+
+                              const resolutionTimes = solvedTickets
+                                .map((ticket) => ticket.resolution_time_minutes)
+                                .filter(Number.isFinite);
+
+                              const avgResolutionMinutes = resolutionTimes.length
+                                ? resolutionTimes.reduce((sum, val) => sum + val, 0) / resolutionTimes.length
+                                : 0;
+
+                              return Number((avgResolutionMinutes / 60).toFixed(1)); // ✅ Convert to hours
+                            })()
+                    - component: codeComponent.ZendeskKPITile1
+                      name: zendeskKPITile12
+                      props:
+                        title: Last 30 Days (vs Previous)
+                        value:
+                          $$jsExpression: >-
+                            (() => {
+                              const allTickets = {
+                                ...(ticketMetric1?.data?.tickets || {}),
+                                ...(ticketMetric2?.data?.tickets || {}),
+                                ...(ticketMetric3?.data?.tickets || {}),
+                                ...(ticketMetric4?.data?.tickets || {}),
+                                ...(ticketMetric5?.data?.tickets || {}),
+                                ...(ticketMetric6?.data?.tickets || {}),
+                                ...(ticketMetric7?.data?.tickets || {}),
+                                ...(ticketMetric8?.data?.tickets || {}),
+                                ...(ticketMetric9?.data?.tickets || {}),
+                                ...(ticketMetric10?.data?.tickets || {}),
+                                ...(ticketMetric11?.data?.tickets || {}),
+                                ...(ticketMetric12?.data?.tickets || {}),
+                                ...(ticketMetric13?.data?.tickets || {}),
+                                ...(ticketMetric14?.data?.tickets || {}),
+                                ...(ticketMetric15?.data?.tickets || {}),
+                                ...(ticketMetric16?.data?.tickets || {}),
+                                ...(ticketMetric17?.data?.tickets || {}),
+                                ...(ticketMetric18?.data?.tickets || {}),
+                                ...(ticketMetric19?.data?.tickets || {}),
+                                ...(ticketMetric20?.data?.tickets || {}),
+                              };
+
+                              const ticketsArray = Object.values(allTickets);
+
+                              const solvedTickets = ticketsArray.filter((ticket) => ticket.solvedLast30Days);
+
+                              const resolutionTimes = solvedTickets
+                                .map((ticket) => ticket.resolution_time_minutes)
+                                .filter((time) => typeof time === 'number');
+
+                              const avgResolutionMinutes = resolutionTimes.length
+                                ? resolutionTimes.reduce((sum, val) => sum + val, 0) / resolutionTimes.length
+                                : 0;
+
+                              return Number((avgResolutionMinutes / 60).toFixed(1)); // Convert to hours
+                            })()
+                        prevValue:
+                          $$jsExpression: >-
+                            (() => {
+                              const allTickets = {
+                                ...(ticketMetric1?.data?.tickets || {}),
+                                ...(ticketMetric2?.data?.tickets || {}),
+                                ...(ticketMetric3?.data?.tickets || {}),
+                                ...(ticketMetric4?.data?.tickets || {}),
+                                ...(ticketMetric5?.data?.tickets || {}),
+                                ...(ticketMetric6?.data?.tickets || {}),
+                                ...(ticketMetric7?.data?.tickets || {}),
+                                ...(ticketMetric8?.data?.tickets || {}),
+                                ...(ticketMetric9?.data?.tickets || {}),
+                                ...(ticketMetric10?.data?.tickets || {}),
+                                ...(ticketMetric11?.data?.tickets || {}),
+                                ...(ticketMetric12?.data?.tickets || {}),
+                                ...(ticketMetric13?.data?.tickets || {}),
+                                ...(ticketMetric14?.data?.tickets || {}),
+                                ...(ticketMetric15?.data?.tickets || {}),
+                                ...(ticketMetric16?.data?.tickets || {}),
+                                ...(ticketMetric17?.data?.tickets || {}),
+                                ...(ticketMetric18?.data?.tickets || {}),
+                                ...(ticketMetric19?.data?.tickets || {}),
+                                ...(ticketMetric20?.data?.tickets || {}),
+                              };
+
+                              const ticketsArray = Object.values(allTickets);
+
+                              const solvedTickets = ticketsArray.filter((ticket) => ticket.solvedPrevious30Days);
+
+                              const resolutionTimes = solvedTickets
+                                .map((ticket) => ticket.resolution_time_minutes)
+                                .filter((time) => typeof time === 'number');
+
+                              const avgResolutionMinutes = resolutionTimes.length
+                                ? resolutionTimes.reduce((sum, val) => sum + val, 0) / resolutionTimes.length
+                                : 0;
+
+                              return Number((avgResolutionMinutes / 60).toFixed(1)); // Convert to hours
+                            })()
+                - component: DataGrid
+                  name: dataGrid
+                  props:
+                    rowsSource: prop
+                    columns:
+                      - field: Tag Name
+                        type: string
+                        align: center
+                        width: 300
+                      - field: Avg Resolution Time
+                        type: string
+                        width: 500
+                        headerName: Avg Resolution Time
+                        align: right
+                    density: compact
+                    rowIdField: Tag Name
+                    loading: false
+                    hideToolbar: false
+
+  maxWidth: xl

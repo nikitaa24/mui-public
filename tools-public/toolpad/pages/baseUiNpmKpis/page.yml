@@ -108,6 +108,7 @@ spec:
             type: number
           - field: ratio
             type: string
+        rowsSource: prop
   queries:
     - name: queryHeadlessLibrariesDownloads
       query:

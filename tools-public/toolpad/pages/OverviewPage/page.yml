@@ -46,6 +46,7 @@ spec:
                   props:
                     variant: h6
                     value: Finance KPIs
+                    mode: text
                 - component: PageRow
                   name: pageRow9
                   props:
@@ -55,10 +56,13 @@ spec:
                       name: text1
                       props:
                         value: Overdue ratio
+                      layout:
+                        columnSize: 1
                     - component: Button
                       name: button
                       layout:
                         horizontalAlign: end
+                        columnSize: 1
                       props:
                         onClick:
                           $$navigationAction:
