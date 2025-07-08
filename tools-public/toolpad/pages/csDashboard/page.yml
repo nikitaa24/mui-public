@@ -1827,6 +1827,12 @@ spec:
         url: https://script.google.com/macros/s/AKfycbzyuVbZuRpeHeKUO6xjtYE-8Zqg0li3VD3YFNn7LMChXsqHvW6H5fomqLHQLRLIS6os/exec
         headers: []
         method: GET
+        searchParams: []
+    - name: query
+      mode: query
+      query:
+        function: ticketMetric_func.ts#default
+        kind: local
   content:
     - component: Container
       name: mainheading
